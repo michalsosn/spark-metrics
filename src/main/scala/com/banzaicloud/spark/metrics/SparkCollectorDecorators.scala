@@ -20,7 +20,7 @@ object NameDecorator {
 trait NameDecorator extends CollectorDecorator {
   val metricsNameReplace: Option[NameDecorator.Replace]
 
-  protected override def familyBuilder = {
+  protected override def familyBuilder: FamilyBuilder = {
     super.familyBuilder.copy(
       familyName = mfs => replaceName(mfs.name),
       sampleBuilder = super.familyBuilder.sampleBuilder.copy(
@@ -37,25 +37,25 @@ trait NameDecorator extends CollectorDecorator {
 }
 
 trait LabelsDecorator extends CollectorDecorator {
-    val extraLabels: Map[String, String]
+  val extraLabels: Map[String, String]
 
-    private val labelNames = extraLabels.keys.toList.asJava
-    private val labelValues = extraLabels.values.toList.asJava
+  private val labelNames = extraLabels.keys.toList.asJava
+  private val labelValues = extraLabels.values.toList.asJava
 
-    protected override def familyBuilder = {
-      super.familyBuilder.copy(
-        sampleBuilder = super.familyBuilder.sampleBuilder.copy(
-          sampleLabelNames = s => mergeLists(s.labelNames, labelNames),
-          sampleLabelValues = s => mergeLists(s.labelValues, labelValues)
-        )
+  protected override def familyBuilder: FamilyBuilder = {
+    super.familyBuilder.copy(
+      sampleBuilder = super.familyBuilder.sampleBuilder.copy(
+        sampleLabelNames = s => mergeLists(s.labelNames, labelNames),
+        sampleLabelValues = s => mergeLists(s.labelValues, labelValues)
       )
-    }
+    )
+  }
 
-    private def mergeLists(list1: util.List[String], list2: util.List[String]): util.List[String] = {
-      val newList = new util.ArrayList[String](list1)
-      newList.addAll(list2)
-      newList
-    }
+  private def mergeLists(list1: util.List[String], list2: util.List[String]): util.List[String] = {
+    val newList = new util.ArrayList[String](list1)
+    newList.addAll(list2)
+    newList
+  }
 }
 
 object PushTimestampDecorator {
@@ -64,7 +64,7 @@ object PushTimestampDecorator {
 trait PushTimestampDecorator extends CollectorDecorator {
   val maybeTimestampProvider: Option[PushTimestampProvider]
 
-  protected override def map(source: util.List[MetricFamilySamples], builder: FamilyBuilder) = {
+  protected override def map(source: util.List[MetricFamilySamples], builder: FamilyBuilder): util.List[MetricFamilySamples] = {
     val builderWithTimestamp = maybeTimestampProvider match {
       case Some(provider) =>
         val timestamp: java.lang.Long = provider.getTimestamp()
@@ -80,10 +80,10 @@ trait PushTimestampDecorator extends CollectorDecorator {
 }
 
 trait ConstantHelpDecorator extends CollectorDecorator {
-  val constatntHelp: String
+  val constantHelp: String
 
-  protected override val familyBuilder = super.familyBuilder.copy(
-      helpMessage = _ => constatntHelp
+  protected override val familyBuilder: FamilyBuilder = super.familyBuilder.copy(
+      helpMessage = _ => constantHelp
   )
 }
 
@@ -96,7 +96,8 @@ class SparkDropwizardExports(private val registry: MetricRegistry,
     with LabelsDecorator
     with PushTimestampDecorator
     with ConstantHelpDecorator {
-  override val constatntHelp: String = "Generated from Dropwizard metric import"
+
+  override val constantHelp: String = "Generated from Dropwizard metric import"
 }
 
 class SparkJmxExports(private val jmxCollector: JmxCollector,
