@@ -154,16 +154,33 @@ abstract class PrometheusSink(property: Properties,
     Option(property.getProperty(KEY_METRICS_NAME_CAPTURE_REGEX))
       .map(new Regex(_))
 
-  val metricsNameReplacement: String =
+  val metricsNameReplacement: Option[String] =
     Option(property.getProperty(KEY_METRICS_NAME_REPLACEMENT))
-        .getOrElse("")
+
+  val metricsNameCaptureRegexSeq: Seq[Regex] = {
+    Stream.iterate(0)(_ + 1)
+      .map { i => Option(property.getProperty(s"$KEY_METRICS_NAME_CAPTURE_REGEX.$i")).map(new Regex(_)) }
+      .takeWhile(_.isDefined)
+      .flatten
+  }
+
+  val metricsNameReplacementSeq: Seq[String] = {
+    Stream.iterate(0)(_ + 1)
+      .map { i => Option(property.getProperty(s"$KEY_METRICS_NAME_REPLACEMENT.$i")) }
+      .takeWhile(_.isDefined)
+      .flatten
+  }
 
   // validate pushgateway host:port
   Try(new URI(s"$pushGatewayAddressProtocol://$pushGatewayAddress")).get
 
   // validate metrics name capture regex
-  if (metricsNameCaptureRegex.isDefined && metricsNameReplacement == "") {
-    throw new IllegalArgumentException("Metrics name replacement must be specified if metrics name capture regexp is set !")
+  if (metricsNameCaptureRegex.isDefined && metricsNameReplacement.isDefined) {
+    throw new IllegalArgumentException("Metrics name replacement must be specified if metrics name capture regexp is set.")
+  }
+  if (metricsNameCaptureRegexSeq.length != metricsNameReplacementSeq.length) {
+    throw new IllegalArgumentException(s"A different number of metrics name regexes and replacements are set. " +
+      s"regexes ${metricsNameCaptureRegexSeq.length} != replacements ${metricsNameReplacementSeq.length}")
   }
 
   val labelsMap = parseLabels(KEY_LABELS).getOrElse(Map.empty[String, String])
@@ -193,8 +210,8 @@ abstract class PrometheusSink(property: Properties,
   logInfo(s"$KEY_PUSHGATEWAY_ADDRESS -> $pushGatewayAddress")
   logInfo(s"$KEY_PUSHGATEWAY_ADDRESS_PROTOCOL -> $pushGatewayAddressProtocol")
   logInfo(s"$KEY_METRICS_NAME_CAPTURE_REGEX -> ${metricsNameCaptureRegex.getOrElse("")}")
-  logInfo(s"$KEY_METRICS_NAME_REPLACEMENT -> $metricsNameReplacement")
-  logInfo(s"$KEY_LABELS -> ${labelsMap}")
+  logInfo(s"$KEY_METRICS_NAME_REPLACEMENT -> ${metricsNameReplacement.getOrElse("")}")
+  logInfo(s"$KEY_LABELS -> $labelsMap")
   logInfo(s"$KEY_JMX_COLLECTOR_CONFIG -> $jmxCollectorConfig")
 
   val metricsFilterProps: Map[String, String] = property.stringPropertyNames().asScala
@@ -208,9 +225,20 @@ abstract class PrometheusSink(property: Properties,
 
   private val pushTimestamp = if (enableTimestamp) Some(PushTimestampProvider()) else None
 
-  private val replace = metricsNameCaptureRegex.map(Replace(_, metricsNameReplacement))
+  private val replaces: Seq[Replace] = {
+      val first: Option[Replace] = for {
+        regex <- metricsNameCaptureRegex
+        replacement <- metricsNameReplacement
+      } yield Replace(regex, replacement)
 
-  lazy val sparkMetricExports = new SparkDropwizardExports(registry, replace, labelsMap, pushTimestamp)
+      val sequence: Seq[Replace] = metricsNameCaptureRegexSeq.zip(metricsNameReplacementSeq).map {
+        case (regex, replacement) => Replace(regex, replacement)
+      }
+
+      first.toSeq ++ sequence
+  }
+
+  lazy val sparkMetricExports = new SparkDropwizardExports(registry, replaces, labelsMap, pushTimestamp)
 
   lazy val jmxMetrics = new SparkJmxExports(new JmxCollector(new File(jmxCollectorConfig)), labelsMap, pushTimestamp)
 
@@ -290,7 +318,6 @@ abstract class PrometheusSink(property: Properties,
     (role, executorId) match {
       case ("driver", _) =>
         ListMap("role" -> role, "app_name" -> appName, "instance" -> instance) ++ labels
-
       case ("executor", Some(id)) =>
         ListMap("role" -> role, "app_name" -> appName, "instance" -> instance, "number" -> id) ++ labels
       case _ =>
@@ -304,7 +331,6 @@ abstract class PrometheusSink(property: Properties,
     (role, executorId) match {
       case ("driver", _) =>
         ListMap("role" -> role) ++ labels
-
       case ("executor", Some(id)) =>
         ListMap("role" -> role, "number" -> id) ++ labels
       case _ =>

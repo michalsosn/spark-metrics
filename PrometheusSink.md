@@ -56,7 +56,7 @@ Add the following lines to metrics configuration file:
 * **unit** - the time unit of the periodicity
 * **pushgateway-enable-timestamp** - controls whether to send the timestamp of the metrics sent to pushgateway. This is disabled by default as **not all** versions of pushgateway support timestamp for metrics.
 * **metrics-name-capture-regex** - if provided than this regexp is applied on each metric name prior sending to Prometheus. The metric name sections captured(regexp groups) will be replaced with the value passed in `metrics-name-replacement`.
-e.g. `(.*driver_)(.+)`. *Supported only in version **2.3-1.1.0 and above**.*
+e.g. `(.*driver_)(.+)`. It's possible to define multiple replacements if you an ordinal number to the key starting with 0 **metrics-name-capture-regex.0** *Supported only in version **2.3-1.1.0 and above**.*
 * **metrics-name-replacement** - the replacement to replace captured sections(regexp groups) metric name. e.g. `${2}`. *Supported only in version **2.3-1.1.0 and above**.*
 * **labels** - the list of labels to be passed to Prometheus with each metrics in addition to the default ones. This must be specified in the format label=value sperated by comma. *Supported only in version **2.3-1.1.0 and above**.*
 * **group-key** - the list of labels to be passed to pushgateway as a group key. This must be specified in the label=value format separated by comma. `role`, `number` labels are always added even if custom group key is set. If `group-key` is not specified PrometheusSink will use `role`, `app_name`, `instance`, `number` and all metrics labels as a group key.

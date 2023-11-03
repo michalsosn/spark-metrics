@@ -6,7 +6,6 @@ import com.banzaicloud.spark.metrics.CollectorDecorator.FamilyBuilder
 import com.banzaicloud.spark.metrics.PushTimestampDecorator.PushTimestampProvider
 import com.codahale.metrics.MetricRegistry
 import io.prometheus.client.Collector.MetricFamilySamples
-import io.prometheus.client.Collector.MetricFamilySamples.Sample
 import io.prometheus.client.dropwizard.DropwizardExports
 import io.prometheus.jmx.JmxCollector
 
@@ -18,7 +17,7 @@ object NameDecorator {
 }
 
 trait NameDecorator extends CollectorDecorator {
-  val metricsNameReplace: Option[NameDecorator.Replace]
+  val metricsNameReplaces: Seq[NameDecorator.Replace]
 
   protected override def familyBuilder: FamilyBuilder = {
     super.familyBuilder.copy(
@@ -30,9 +29,10 @@ trait NameDecorator extends CollectorDecorator {
   }
 
   private def replaceName(name: String) = {
-    metricsNameReplace.map {
-      case NameDecorator.Replace(regex, replacement) => regex.replaceAllIn(name, replacement)
-    }.getOrElse(name)
+    metricsNameReplaces.foldLeft(name) {
+      case (curName, NameDecorator.Replace(regex, replacement)) =>
+        regex.replaceAllIn(curName, replacement)
+    }
   }
 }
 
@@ -88,7 +88,7 @@ trait ConstantHelpDecorator extends CollectorDecorator {
 }
 
 class SparkDropwizardExports(private val registry: MetricRegistry,
-                             override val metricsNameReplace: Option[NameDecorator.Replace],
+                             override val metricsNameReplaces: Seq[NameDecorator.Replace],
                              override val extraLabels: Map[String, String],
                              override val maybeTimestampProvider: Option[PushTimestampProvider])
   extends CollectorDecorator(new DropwizardExports(registry))
