@@ -159,23 +159,25 @@ abstract class PrometheusSink(property: Properties,
 
   val metricsNameCaptureRegexSeq: Seq[Regex] = {
     Stream.iterate(0)(_ + 1)
-      .map { i => Option(property.getProperty(s"$KEY_METRICS_NAME_CAPTURE_REGEX.$i")).map(new Regex(_)) }
+      .map { i => Option(property.getProperty(s"$KEY_METRICS_NAME_CAPTURE_REGEX-$i")).map(new Regex(_)) }
       .takeWhile(_.isDefined)
       .flatten
+      .toList
   }
 
   val metricsNameReplacementSeq: Seq[String] = {
     Stream.iterate(0)(_ + 1)
-      .map { i => Option(property.getProperty(s"$KEY_METRICS_NAME_REPLACEMENT.$i")) }
+      .map { i => Option(property.getProperty(s"$KEY_METRICS_NAME_REPLACEMENT-$i")) }
       .takeWhile(_.isDefined)
       .flatten
+      .toList
   }
 
   // validate pushgateway host:port
   Try(new URI(s"$pushGatewayAddressProtocol://$pushGatewayAddress")).get
 
   // validate metrics name capture regex
-  if (metricsNameCaptureRegex.isDefined && metricsNameReplacement.isDefined) {
+  if (metricsNameCaptureRegex.isDefined != metricsNameReplacement.isDefined) {
     throw new IllegalArgumentException("Metrics name replacement must be specified if metrics name capture regexp is set.")
   }
   if (metricsNameCaptureRegexSeq.length != metricsNameReplacementSeq.length) {
@@ -225,7 +227,7 @@ abstract class PrometheusSink(property: Properties,
 
   private val pushTimestamp = if (enableTimestamp) Some(PushTimestampProvider()) else None
 
-  private val replaces: Seq[Replace] = {
+  private val replacements: Seq[Replace] = {
       val first: Option[Replace] = for {
         regex <- metricsNameCaptureRegex
         replacement <- metricsNameReplacement
@@ -238,7 +240,7 @@ abstract class PrometheusSink(property: Properties,
       first.toSeq ++ sequence
   }
 
-  lazy val sparkMetricExports = new SparkDropwizardExports(registry, replaces, labelsMap, pushTimestamp)
+  lazy val sparkMetricExports = new SparkDropwizardExports(registry, replacements, labelsMap, pushTimestamp)
 
   lazy val jmxMetrics = new SparkJmxExports(new JmxCollector(new File(jmxCollectorConfig)), labelsMap, pushTimestamp)
 
