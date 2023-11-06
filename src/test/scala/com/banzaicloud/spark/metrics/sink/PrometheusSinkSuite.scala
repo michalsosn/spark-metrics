@@ -4,9 +4,7 @@ import java.io.IOException
 import java.util
 import java.util.Properties
 import java.util.concurrent.CopyOnWriteArrayList
-
 import com.banzaicloud.spark.metrics.sink.PrometheusSink.SinkConfig
-import com.banzaicloud.spark.metrics.sink.PrometheusSinkSuite.{DefaultConstr, JavaMapConstr, PropertiesConstr, ScalaMapConstr}
 import com.codahale.metrics.{Metric, MetricFilter, MetricRegistry}
 import io.prometheus.client.CollectorRegistry
 import io.prometheus.client.exporter.PushGateway
@@ -15,15 +13,18 @@ import org.junit.{Assert, Test}
 
 import scala.collection.JavaConverters._
 import scala.util.Try
+import scala.util.matching.Regex
 
 class PrometheusSinkSuite {
-  case class TestSinkConfig(metricsNamespace: Option[String],
-                            sparkAppId: Option[String],
-                            sparkAppName: Option[String],
-                            executorId: Option[String]) extends SinkConfig
+  case class TestSinkConfig(
+    metricsNamespace: Option[String],
+    sparkAppId: Option[String],
+    sparkAppName: Option[String],
+    executorId: Option[String]
+  ) extends SinkConfig
 
 
-  val basicProperties = {
+  val basicProperties: Properties = {
     val properties = new Properties
     properties.setProperty("enable-jmx-collector", "true")
     properties.setProperty("labels", "a=1,b=22")
@@ -33,19 +34,19 @@ class PrometheusSinkSuite {
     properties
   }
 
-
   trait Fixture {
-    def sinkConfig = TestSinkConfig(Some("test-job-name"), Some("test-app-id"), Some("test-app-name"), None)
+    def sinkConfig: TestSinkConfig = TestSinkConfig(Some("test-job-name"), Some("test-app-id"), Some("test-app-name"), None)
     lazy val pgMock = new PushGatewayMock
     lazy val registry = new MetricRegistry
 
-    def withSink[T](properties: Properties = basicProperties)(fn: (SparkPrometheusSink) => T): Unit = {
+    def withSink[T](properties: Properties = basicProperties)(fn: SparkPrometheusSink => T): Unit = {
       // Given
-      val sink = new SparkPrometheusSink(properties, registry, sinkConfig, _ => pgMock)
+      val sink: SparkPrometheusSink = new SparkPrometheusSink(properties, registry, sinkConfig, _ => pgMock)
       try {
       //When
         sink.start()
         sink.report()
+        fn(sink)
       } finally {
         Try(sink.stop()) // We call stop to avoid duplicated metrics across different tests
       }
@@ -55,18 +56,19 @@ class PrometheusSinkSuite {
   @Test
   def testSinkForDriver(): Unit = new Fixture {
     //Given
-    override val sinkConfig = super.sinkConfig.copy(executorId = Some("driver"))
+    override val sinkConfig: TestSinkConfig = super.sinkConfig.copy(executorId = Some("driver"))
 
     registry.counter("test-counter").inc(3)
     withSink() { sink =>
       //Then
       Assert.assertTrue(pgMock.requests.size == 1)
       val request = pgMock.requests.head
+      val families = request.registry.metricFamilySamples().asScala.toList
 
       Assert.assertTrue(request.job == "test-job-name")
       Assert.assertTrue(request.groupingKey.asScala == Map("role" -> "driver", "key1" -> "AA", "key2" -> "BB"))
       Assert.assertTrue(
-        request.registry.metricFamilySamples().asScala.exists(_.name == "jmx_config_reload_success_total")
+          families.exists(_.name == "java_lang_CodeHeap_non_nmethods_PeakUsage_used")
       )
       Assert.assertTrue(
         sink.metricsFilter == MetricFilter.ALL
@@ -77,7 +79,7 @@ class PrometheusSinkSuite {
   @Test
   def testSinkForExecutor(): Unit = new Fixture {
     //Given
-    override val sinkConfig = super.sinkConfig.copy(executorId = Some("2"))
+    override val sinkConfig: TestSinkConfig = super.sinkConfig.copy(executorId = Some("2"))
 
     registry.counter("test-counter").inc(3)
 
@@ -97,7 +99,7 @@ class PrometheusSinkSuite {
         labels == List("a" -> "1", "b" -> "22")
       }
       Assert.assertTrue(
-        families.exists(_.name == "jmx_config_reload_success_total")
+          families.exists(_.name == "java_lang_CodeHeap_non_nmethods_PeakUsage_used")
       )
       Assert.assertTrue(
         sink.metricsFilter == MetricFilter.ALL
@@ -105,31 +107,24 @@ class PrometheusSinkSuite {
     }
   }
 
+  val testMetricsNameCaptureRegexPropertyProperties: Properties = {
+    val properties = new Properties
+    properties.setProperty("metrics-name-capture-regex-0", "[a-z]")
+    properties.setProperty("metrics-name-replacement-0", "x")
+    properties.setProperty("metrics-name-capture-regex-1", "[A-Z]")
+    properties.setProperty("metrics-name-replacement-1", "X")
+    properties
+  }
+
   @Test
-  def testMetricsFilterInstantiation(): Unit = new Fixture {
-
-    def testMetricPropertySet(tests: (Class[_], MetricFilter => Any)*) = for {(cls, getter) <- tests} withSink({
-      val properties = new Properties()
-      properties.put("metrics-filter-class", cls)
-      properties.put("metrics-filter-key", "value")
-      properties
-    }) { sink =>
-      Assert.assertEquals(cls, sink.metricsFilter.getClass)
-      Assert.assertEquals("value", getter(sink.metricsFilter))
-    }
-
-    testMetricPropertySet(
-      (classOf[PropertiesConstr], _.asInstanceOf[PropertiesConstr].props.get("key")),
-      (classOf[JavaMapConstr], _.asInstanceOf[JavaMapConstr].props.get("key")),
-      (classOf[ScalaMapConstr], _.asInstanceOf[ScalaMapConstr].props("key")),
-    )
-
-    withSink({
-      val properties = new Properties()
-      properties.put("metrics-filter-class", classOf[DefaultConstr])
-      properties
-    }) { sink =>
-      Assert.assertEquals(classOf[DefaultConstr], sink.metricsFilter.getClass)
+  def testMetricsNameCaptureRegexProperty(): Unit = new Fixture {
+    //Given
+    withSink(properties = testMetricsNameCaptureRegexPropertyProperties) { sink =>
+      //Then
+      Assert.assertEquals(sink.metricsNameCaptureRegex, Option.empty[Regex])
+      Assert.assertEquals(sink.metricsNameReplacement, Option.empty[String])
+      Assert.assertEquals(sink.metricsNameCaptureRegexSeq.map(_.regex), List("[a-z]", "[A-Z]"))
+      Assert.assertEquals(sink.metricsNameReplacementSeq, List("x", "X"))
     }
   }
 
@@ -138,7 +133,7 @@ class PrometheusSinkSuite {
     case class Request(registry: CollectorRegistry, job: String, groupingKey: util.Map[String, String], method: String)
 
     @throws[IOException]
-    override def push(registry: CollectorRegistry, job: String) {
+    override def push(registry: CollectorRegistry, job: String): Unit = {
       logRequest(registry, job, null, "PUT")
     }
 
@@ -148,7 +143,7 @@ class PrometheusSinkSuite {
     }
 
     @throws[IOException]
-    override def pushAdd(registry: CollectorRegistry, job: String) {
+    override def pushAdd(registry: CollectorRegistry, job: String): Unit = {
       logRequest(registry, job, null, "POST")
     }
 
@@ -158,16 +153,16 @@ class PrometheusSinkSuite {
     }
 
     @throws[IOException]
-    override def delete(job: String) {
+    override def delete(job: String): Unit = {
       logRequest(null, job, null, "DELETE")
     }
 
     @throws[IOException]
-    override def delete(job: String, groupingKey: util.Map[String, String]) {
+    override def delete(job: String, groupingKey: util.Map[String, String]): Unit = {
       logRequest(null, job, groupingKey, "DELETE")
     }
 
-    private def logRequest(registry: CollectorRegistry, job: String, groupingKey: util.Map[String, String], method: String) {
+    private def logRequest(registry: CollectorRegistry, job: String, groupingKey: util.Map[String, String], method: String): Unit = {
       requests += Request(registry, job, groupingKey, method)
     }
   }
